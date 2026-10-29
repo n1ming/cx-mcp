@@ -44,15 +44,14 @@ npm install
 
 用户只需告诉 agent 要做哪个（哪些）课程的作业：
 
-```mermaid
-flowchart LR
-    U["👤 用户：做 xx 课的作业"] --> A
-    subgraph agent["🤖 agent 自主完成"]
-        A["cx_list_courses<br/>找课程"] --> B["cx_list_homework<br/>列作业"]
-        B --> C["cx_get_homework<br/>读题目"]
-        C --> D["✍️ 按格式写答案"]
-        D --> E["cx_submit_homework<br/>提交（可先 dryRun）"]
-    end
+```text
+👤 用户：做 xx 课的作业
+   └─ 🤖 agent 自主完成
+        ① cx_list_courses     找课程
+        ② cx_list_homework    列作业
+        ③ cx_get_homework     读题目（返回作答格式说明）
+        ④ 按格式写答案
+        ⑤ cx_submit_homework  提交（拿不准先 dryRun: true）
 ```
 
 ## 📝 answer 值格式
