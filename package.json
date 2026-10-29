@@ -1,0 +1,14 @@
+{
+  "name": "cx-mcp",
+  "version": "0.1.0",
+  "description": "xxt (cx) homework protocol MCP server: list courses, list homework, read questions, submit answers",
+  "type": "module",
+  "main": "server.mjs",
+  "bin": { "cx-mcp": "server.mjs" },
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  }
+}
