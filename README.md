@@ -27,14 +27,14 @@ npm install
 
 ## 🔧 配置
 
-在 mcpServers 中添加：
+在 mcpServers 中添加（`/path/to/cx-mcp` 替换为你本机的克隆路径）：
 
 ```json
 {
   "mcpServers": {
     "cx-mcp": {
       "command": "node",
-      "args": ["E:\\AI\\tools\\mcp\\cx-mcp\\server.mjs"]
+      "args": ["/path/to/cx-mcp/server.mjs"]
     }
   }
 }
