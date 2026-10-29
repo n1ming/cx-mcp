@@ -96,7 +96,7 @@ server.registerTool("cx_list_homework", {
 
 server.registerTool("cx_get_homework", {
   title: "读作业题目",
-  description: "打开作业作答页, 返回: 题目列表(题干/题型/选项/已有答案)、提交所需的全部令牌(standardEnc/enc_work/totalQuestionNum)、以及每题 answer<qid> 的填写格式要求。只读, 不提交。",
+  description: "打开作业作答页, 返回: 题目列表(题干/题型/选项/题干附件attachments/题干图片stemImages/已有答案)、提交所需的全部令牌(standardEnc/enc_work/totalQuestionNum)、以及每题 answer<qid> 的填写格式要求。题干附件用 cx_get_attachment_download 拿下载地址。只读, 不提交。",
   inputSchema: {
     courseId: z.string(), classId: z.string(), cpi: z.string(),
     workId: z.string().describe("作业 id (workRelationId)"),
@@ -104,6 +104,22 @@ server.registerTool("cx_get_homework", {
     enc: z.string().describe("列表页带来的该条作业 enc"),
   },
 }, async (a) => text(await cx.getHomework(a)));
+
+server.registerTool("cx_get_attachment_download", {
+  title: "附件下载地址",
+  description: "按 objectid 解析附件(题目给的文件)的下载 URL 与元信息(filename/size)。下载 URL 是带签名的直链, 用任意 HTTP 客户端即可下载。",
+  inputSchema: { objectid: z.string().describe("附件 objectid (32位hex, 题目 attachments 里带的)") },
+}, async ({ objectid }) => text(await cx.attachmentInfo(objectid)));
+
+server.registerTool("cx_upload_attachment", {
+  title: "上传作业附件/图片",
+  description: "上传本地文件作为作业答案的附件或图片(zip/doc/pdf/图片等), 返回 objectid、url 和 answerHtml —— 把 answerHtml 原样拼进该题 answer<qid> 的 HTML 里再提交即可。图片类扩展名自动用 <img>, 其它用附件 iframe。",
+  inputSchema: {
+    courseId: z.string(), classId: z.string(), cpi: z.string(),
+    workId: z.string(), answerId: z.string(), enc: z.string(),
+    filePath: z.string().describe("本地文件绝对路径"),
+  },
+}, async (a) => text(await cx.uploadAttachment(a)));
 
 server.registerTool("cx_submit_homework", {
   title: "提交作业",

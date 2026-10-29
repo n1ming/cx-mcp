@@ -83,6 +83,11 @@ agent 自己拿到含 `_uid / UID / vc3 / uf / _d` 的整段 Cookie 请求头字
 | 填空 | JSON 数组串（每空一项） | `'["答案1","答案2"]'` |
 | 简答/富文本 | HTML 字符串 | `"<p>…</p>"` |
 
+**带文件/图片的作业**：
+
+- 题目给的附件/图片：`cx_get_homework` 返回的题目里带 `attachments`（objectid/文件名/类型/大小）和 `stemImages`（图片 URL）；附件用 `cx_get_attachment_download` 拿带签名的下载直链；
+- 答案需要交文件/图片：`cx_upload_attachment` 上传本地文件，返回 `answerHtml` —— 原样拼进该题 `answer<qid>` 的 HTML 里再提交（图片自动用 `<img>`，文件自动用附件 iframe，与网页端产物同构）。
+
 ## 🧰 工具一览
 
 | 工具 | 说明 |
@@ -94,7 +99,9 @@ agent 自己拿到含 `_uid / UID / vc3 / uf / _d` 的整段 Cookie 请求头字
 | `cx_check_login` | 验证登录态；无效时返回 `NOT_LOGGED_IN` 引导 |
 | `cx_list_courses` | 全部课程（courseId / classId / cpi / 名称 / 教师） |
 | `cx_list_homework` | 某课全部作业（workId / answerId / enc / 标题 / 状态） |
-| `cx_get_homework` | 题目详情 + 作答格式说明 + 提交令牌 |
+| `cx_get_homework` | 题目详情 + 题干附件/图片 + 作答格式说明 + 提交令牌 |
+| `cx_get_attachment_download` | 按 objectid 解析附件下载直链（带签名） |
+| `cx_upload_attachment` | 上传本地文件/图片作为答案，返回可直接拼入答案的 answerHtml |
 | `cx_submit_homework` | 提交作业（`pyFlag=3` 真实交卷；`dryRun: true` 只生成请求体） |
 
 ## 📄 License

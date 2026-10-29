@@ -64,7 +64,7 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 // 人味延迟: 链路请求间随机停顿, 模拟人操作节奏
 const humanPause = () => sleep(150 + Math.floor(Math.random() * 350));
 
-async function req(url, { method = "GET", body = null, referer = null, mode = "xhr" } = {}) {
+async function req(url, { method = "GET", body = null, referer = null, mode = "xhr", multipart = null } = {}) {
   if (!COOKIE) loadCookies();
   const isNav = mode === "navigate";
   const headers = {
@@ -81,7 +81,14 @@ async function req(url, { method = "GET", body = null, referer = null, mode = "x
   if (isNav) headers["Sec-Fetch-User"] = "?1";
   if (isNav) headers["Upgrade-Insecure-Requests"] = "1";
   if (referer) headers["Referer"] = referer;
-  if (body !== null) {
+  if (multipart) {
+    // multipart 上传: 不手动设 Content-Type(fetch 自动带 boundary)
+    const fd = new FormData();
+    fd.append(multipart.field, new Blob([multipart.data], { type: multipart.contentType }), multipart.filename);
+    body = fd;
+    headers["X-Requested-With"] = "XMLHttpRequest";
+    headers["Origin"] = new URL(url).origin;
+  } else if (body !== null) {
     headers["Content-Type"] = "application/x-www-form-urlencoded; charset=UTF-8";
     headers["X-Requested-With"] = "XMLHttpRequest";
     headers["Origin"] = new URL(url).origin;  // 浏览器 XHR POST 必带, 缺失是 A2 类差异
@@ -250,7 +257,20 @@ function parseQuestions(html) {
     if (!qid) continue;
     const typeName = (b.match(/typeName="([^"]+)"/) || [])[1] || "";
     const type = parseInt((b.match(/id="answertype\d+"[^>]*value="(\d+)"/) || [])[1] ?? (b.match(/name="answertype\d+"[^>]*value="(\d+)"/) || [])[1], 10);
-    const stem = stripTags((b.match(/<h3[^>]*class="mark_name[^"]*"[\s\S]*?<\/h3>/) || [""])[0]);
+    const stemBlock = (b.match(/<h3[^>]*class="mark_name[^"]*"[\s\S]*?<\/h3>/) || [""])[0];
+    const stem = stripTags(stemBlock);
+    // 题干附件(module=insertAttach 的 iframe) 与题干图片
+    const attachments = [];
+    for (const m of stemBlock.matchAll(/<iframe[^>]*module="insertAttach"[^>]*>/g)) {
+      const tag = m[0];
+      attachments.push({
+        objectid: (tag.match(/objectid="([^"]+)"/) || [])[1] || "",
+        filename: (tag.match(/filename="([^"]*)"/) || [])[1] || "",
+        filetype: (tag.match(/filetype="([^"]*)"/) || [])[1] || "",
+        filesize: (tag.match(/filesize="([^"]*)"/) || [])[1] || "",
+      });
+    }
+    const stemImages = [...stemBlock.matchAll(/<img[^>]*src="([^"]+)"/g)].map(m => decodeEntities(m[1]));
     // 选项
     const options = [];
     const ul = b.match(/<ul[^>]*class="[^"]*qtDetail[^"]*"[\s\S]*?<\/ul>/);
@@ -259,6 +279,8 @@ function parseQuestions(html) {
         options.push(stripTags(li));
       }
     }
+    // 选项图片(选项也可能是图)
+    const optionImages = [...(ul ? ul[0].matchAll(/<img[^>]*src="([^"]+)"/g) : [])].map(m => decodeEntities(m[1]));
     // 已有答案(view/已答)
     const existing = (b.match(/class="stuAnswerContent"[^>]*>([\s\S]*?)<\/span>/) || [])[1];
     // 填空空数
@@ -271,6 +293,9 @@ function parseQuestions(html) {
       typeName: typeName || TYPE_NAMES[type] || `type${type}`,
       stem,
       options,
+      attachments: attachments.length ? attachments : undefined,
+      stemImages: stemImages.length ? stemImages : undefined,
+      optionImages: optionImages.length ? optionImages : undefined,
       blanks: blanks || undefined,
       existingAnswer: existing !== undefined ? stripTags(existing) : undefined,
       currentValueHtml: curTextarea !== undefined ? decodeEntities(curTextarea) : undefined,
@@ -308,8 +333,10 @@ export async function getHomework({ courseId, classId, cpi, workId, answerId, en
   const tokens = {
     standardEnc: (pageHtml.match(/id="standardEnc"[^>]*value="([0-9a-f]{32})"/) || pageUrl.match(/standardEnc=([0-9a-f]{32})/) || [])[1] || "",
     encWork: (pageHtml.match(/id="enc_work"[^>]*value="([0-9a-f]{32})"/) || [])[1] || "",
-    totalQuestionNum: (pageHtml.match(/totalQuestionNum=([0-9a-f]{32})/) || [])[1] || "",
+    totalQuestionNum: (pageHtml.match(/totalQuestionNum=([0-9a-f]{32})"/) || pageHtml.match(/totalQuestionNum=([0-9a-f]{32})/) || [])[1] || "",
   };
+  // 附件/图片上传配置(t 与 enc2 同页 SSR, 必须配对使用)
+  const uploadQ = (pageHtml.match(/imageUrl\s*=\s*ServerHost\.uploadDomain\s*\+\s*"([^"]+)"/) || [])[1] || "";
   const questions = parseQuestions(pageHtml);
   const answerFormat = {
     单选: "单个大写字母, 如 'A'",
@@ -317,14 +344,77 @@ export async function getHomework({ courseId, classId, cpi, workId, answerId, en
     判断: "'Right' 或 'Wrong'",
     填空: "JSON数组字符串(每空一项): '[\"答案1\",\"答案2\"]'",
     简答及其它富文本: "HTML 字符串, 如 '<p>…</p>'",
+    附件或图片: "先用 cx_upload_attachment 上传, 把返回的 answerHtml 拼进答案 HTML",
   };
   return {
     mode, pageUrl, tokens, answerFormat,
+    upload: uploadQ ? { uploadPath: uploadQ } : undefined,
     submittable: mode === "dowork" && !!(tokens.encWork && tokens.totalQuestionNum),
     questionCount: questions.length,
     questions,
     note: mode === "view" ? "已批阅只读页(view), 服务端不再下发 dowork 令牌, 无法通过协议重新提交" : "",
   };
+}
+
+// ---------- 附件/图片 ----------
+function fmtSize(n) {
+  if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(2) + "M";
+  if (n >= 1024) return (n / 1024).toFixed(2) + "K";
+  return String(n) + "B";
+}
+
+// 上传文件作为作业附件/图片, 返回可直接拼进 answer<qid> 的 HTML 片段
+export async function uploadAttachment({ courseId, classId, cpi, workId, answerId, enc, filePath }) {
+  const _gate = await ensureLogin();
+  if (_gate) return _gate;
+
+  const hw = await getHomework({ courseId, classId, cpi, workId, answerId, enc });
+  if (hw.mode !== "dowork") throw new Error(`作业不在可作答状态(mode=${hw.mode})`);
+  const uploadPath = hw.upload && hw.upload.uploadPath;
+  if (!uploadPath) throw new Error("作答页没有上传配置(uploadEnc), 无法上传附件");
+
+  const buf = fs.readFileSync(filePath);
+  const filename = path.basename(filePath);
+  const ext = (filename.match(/\.([A-Za-z0-9]+)$/) || [])[1] || "";
+  const mimeMap = { zip: "application/zip", rar: "application/x-rar-compressed", "7z": "application/x-7z-compressed", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", txt: "text/plain", pdf: "application/pdf", doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", xls: "application/vnd.ms-excel", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ppt: "application/vnd.ms-powerpoint", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation" };
+
+  const res = await req(`https://mooc1.chaoxing.com/upload-ans${uploadPath}`, {
+    method: "POST",
+    referer: hw.pageUrl,
+    multipart: { field: "upfile", filename, contentType: mimeMap[ext.toLowerCase()] || "application/octet-stream", data: buf },
+  });
+  const body = await res.text();
+  let j;
+  try { j = JSON.parse(body); } catch { throw new Error(`上传响应非 JSON: ${body.slice(0, 200)}`); }
+  if ((j.state || "") !== "SUCCESS") throw new Error(`上传失败: ${JSON.stringify(j).slice(0, 200)}`);
+
+  const url = j.url;
+  const objectid = (url.match(/\/([0-9a-f]{32})\./) || [])[1] || "";
+  const size = fmtSize(buf.length);
+  const info = { objectid, filename, filetype: ext.toLowerCase(), filesize: size, url };
+  const b64 = Buffer.from(encodeURIComponent(JSON.stringify({ objectid, name: filename, type: ext.toLowerCase(), size }))).toString("base64");
+  const isImage = /^(png|jpe?g|gif|bmp|webp)$/.test(ext.toLowerCase());
+  // 图片用 <img>, 文件用 insertAttach iframe(与浏览器 UEditor 产物同构)
+  const answerHtml = isImage
+    ? `<img src="${url}" title="${filename}" alt="${filename}">`
+    : `<div class="editor-iframe" contenteditable="false"><iframe frameborder="0" scrolling="no" src="/ananas/common-modules/attachment/insertCloud.html" class="attach-iframe" module="insertAttach" objectid="${objectid}" filename="${filename}" filetype="${ext.toLowerCase()}" filesize="${size}" name="${b64}" style="display: block; max-width: 620px; width: 100%; height: 74px;"></iframe></div>`;
+  return { ...info, answerHtml, hint: "把 answerHtml 拼进该题 answer<qid> 的 HTML 里再提交" };
+}
+
+// 已知 objectid → 下载地址与元信息(题目给的附件用它拿文件)
+export async function attachmentInfo(objectid) {
+  const _gate = await ensureLogin();
+  if (_gate) return _gate;
+  const res = await req(`https://mooc1.chaoxing.com/ananas/status/${objectid}?k=&flag=normal`, {
+    referer: `${HOSTS.mooc1}/mooc-ans/mooc2/work/dowork`,
+  });
+  const body = await res.text();
+  try {
+    const j = JSON.parse(body);
+    return { objectid, filename: j.filename, size: j.length, download: j.download, status: j.status };
+  } catch {
+    throw new Error(`ananas status 非 JSON(${res.status}): ${body.slice(0, 120)}`);
+  }
 }
 
 // ---------- 提交 ----------
