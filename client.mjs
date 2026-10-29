@@ -18,7 +18,6 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const COOKIES_FILE = process.env.CX_COOKIES_FILE || path.join(__dirname, "cookies.json");
 
-const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:153.0) Gecko/20100101 Firefox/153.0";
 const HOSTS = {
   i: "https://i.chaoxing.com",
   api: "https://mooc1-api.chaoxing.com",
@@ -27,27 +26,38 @@ const HOSTS = {
 };
 
 let COOKIE = "";
+let COOKIE_UA = "";   // 交付/登录时浏览器的 UA, 请求时原样使用保持指纹一致
 let _cookieMtime = 0;
+
+const DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:153.0) Gecko/20100101 Firefox/153.0";
 
 function loadCookies() {
   if (process.env.CX_COOKIES) { COOKIE = process.env.CX_COOKIES; return; }
-  if (!fs.existsSync(COOKIES_FILE)) throw new Error("no cookies: 先调用 cx_set_cookies 或写入 cookies.json");
+  if (!fs.existsSync(COOKIES_FILE)) throw new Error("no cookies: 先调用 cx_set_cookies/cx_login 或写入 cookies.json");
   const mtime = fs.statSync(COOKIES_FILE).mtimeMs;
   if (COOKIE && mtime === _cookieMtime) return;  // 文件没变, 用缓存; 变了(外部更新/重新交付)则重读
-  COOKIE = JSON.parse(fs.readFileSync(COOKIES_FILE, "utf8")).cookie || "";
+  const j = JSON.parse(fs.readFileSync(COOKIES_FILE, "utf8"));
+  COOKIE = j.cookie || "";
+  COOKIE_UA = j.ua || "";
   _cookieMtime = mtime;
   if (!COOKIE) throw new Error("cookies.json 里没有 cookie 字段");
 }
 
-export async function setCookies(cookie) {
+export async function setCookies(cookie, userAgent) {
   COOKIE = cookie.trim();
+  COOKIE_UA = (userAgent || "").trim();
   fs.writeFileSync(COOKIES_FILE, JSON.stringify({
     cookie: COOKIE,
+    ua: COOKIE_UA,
     uid: (COOKIE.match(/(?:^|;\s*)_uid=(\d+)/) || [])[1] || "",
     savedAt: new Date().toISOString(),
   }, null, 2));
   _cookieMtime = fs.statSync(COOKIES_FILE).mtimeMs;
-  return { saved: true, file: COOKIES_FILE, uid: (COOKIE.match(/_uid=(\d+)/) || [])[1] };
+  return {
+    saved: true, file: COOKIES_FILE,
+    uid: (COOKIE.match(/_uid=(\d+)/) || [])[1] || "",
+    ua: COOKIE_UA || "(未提供, 将使用内置默认 UA — 建议交付登录浏览器的真实 UA 以保持指纹一致)",
+  };
 }
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -58,7 +68,7 @@ async function req(url, { method = "GET", body = null, referer = null, mode = "x
   if (!COOKIE) loadCookies();
   const isNav = mode === "navigate";
   const headers = {
-    "User-Agent": UA,
+    "User-Agent": COOKIE_UA || DEFAULT_UA,  // 与 Cookie 来源浏览器保持一致
     // XHR 与导航的 Accept 与 Firefox/jQuery 行为对齐
     "Accept": isNav ? "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8" : "*/*",
     "Accept-Language": "zh-CN,zh;q=0.9",
@@ -103,7 +113,7 @@ export function notLoggedInPayload(chk = {}) {
     error: "NOT_LOGGED_IN",
     message: "xxt 登录 Cookie 缺失或已失效，本次操作未执行。请先获取有效登录 Cookie 并通过 cx_set_cookies 交付，获取方式由你(agent)自行决定。",
     need: {
-      what: "浏览器请求头里的整段 Cookie 字符串(源站 https://*.chaoxing.com 登录态)",
+      what: "浏览器请求头里的整段 Cookie 字符串(源站 https://*.chaoxing.com 登录态); 建议同时提供该浏览器的 User-Agent(与 Cookie 同源, 保证请求指纹一致)",
       must_contain: ["_uid", "UID", "vc3", "uf", "_d"],
       critical_note: "vc3 与 _d 是 HttpOnly，页面 document.cookie 读不到；必须从网络请求头复制，或用能读 HttpOnly 的浏览器自动化 cookie API(如 WebDriver-BiDi storage.getCookies)获取。",
       lifetime_hint: "p_auth_token(JWT) 签发后约 7 天过期；期间服务端不轮换 cookie。",

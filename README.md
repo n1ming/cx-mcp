@@ -7,6 +7,7 @@
 _接入后，agent 一条龙完成：选课 → 列作业 → 读题 → 写答案 → 提交_
 
 [![Node](https://img.shields.io/badge/Node.js-%3E%3D18-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
+[![Browser](https://img.shields.io/badge/browser-Chrome%20%7C%20Edge-4285F4?logo=googlechrome&logoColor=white)](https://www.google.com/chrome)
 [![Protocol](https://img.shields.io/badge/protocol-MCP-7C3AED)](https://modelcontextprotocol.io)
 [![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
 
@@ -19,7 +20,7 @@ _接入后，agent 一条龙完成：选课 → 列作业 → 读题 → 写答�
 | 依赖 | 要求 |
 |---|---|
 | [Node.js](https://nodejs.org) | **≥ 18**（需内置 fetch，建议 20+） |
-| 安装 | 克隆/下载本目录后执行一次 `npm install` |
+| 本机浏览器 | Chrome 或 Edge 任一（`cx_login` 用系统真实浏览器） |
 
 ```bash
 npm install
@@ -54,6 +55,24 @@ npm install
         ⑤ cx_submit_homework  提交（拿不准先 dryRun: true）
 ```
 
+## 🔑 登录
+
+未登录时，任何业务工具返回 `{ "error": "NOT_LOGGED_IN", "need": { … } }`。两种恢复方式：
+
+**方式一：浏览器登录（推荐）**
+
+```text
+cx_login_start（可选带 username/password；验证码/滑块/扫码由用户在弹出的真实浏览器窗口里手动完成）
+→ cx_login_status（轮询直到 success）
+→ 成功后自动抓取全部 cookie（含 HttpOnly）和登录浏览器的 UA 一并保存
+```
+
+**方式二：agent 自行交付**
+
+agent 自己拿到含 `_uid / UID / vc3 / uf / _d` 的整段 Cookie 请求头字符串后调 `cx_set_cookies`（建议同时给 `userAgent`，即 Cookie 来源浏览器的 UA —— 客户端会用它发请求，保持请求指纹与登录态同源）。注意 `vc3` 是 HttpOnly，`document.cookie` 读不到，需从网络请求头或能读 HttpOnly 的自动化 cookie API 获取。
+
+两种方式保存后均可用 `cx_check_login` 确认 `loggedIn: true`。
+
 ## 📝 answer 值格式
 
 | 题型 | 值 | 示例 |
@@ -68,7 +87,10 @@ npm install
 
 | 工具 | 说明 |
 |---|---|
-| `cx_set_cookies` | 交付 Cookie（整段请求头字符串），当场验证并保存 |
+| `cx_login_start` | 拉起本机 Chrome/Edge 完成登录，自动存 cookie + UA（本调用立即返回） |
+| `cx_login_status` | 轮询登录进度（running / success / failed / timeout / cancelled） |
+| `cx_login_cancel` | 取消登录并关闭浏览器 |
+| `cx_set_cookies` | 手动交付 Cookie（可选 `userAgent`），当场验证并保存 |
 | `cx_check_login` | 验证登录态；无效时返回 `NOT_LOGGED_IN` 引导 |
 | `cx_list_courses` | 全部课程（courseId / classId / cpi / 名称 / 教师） |
 | `cx_list_homework` | 某课全部作业（workId / answerId / enc / 标题 / 状态） |

@@ -10,33 +10,60 @@
  *  - answer<qid> 取值: 单选="A"; 多选="ABD"(升序连写); 判断="Right"/"Wrong";
  *    简答/富文本(type 4/5/6/7/8/18)=HTML 字符串。
  *
- * 登录态: cookies.json {"cookie": "...", "uid": "...", "fid": "..."}
- *         或环境变量 CX_COOKIES(整段cookie字符串)。HttpOnly cookie 需从浏览器请求头复制。
+ * 登录态: cookies.json {"cookie": "...", "ua": "登录浏览器的UA", ...}
+ *         或环境变量 CX_COOKIES(整段cookie字符串)。
+ *         两条获取路径: cx_login(浏览器登录, 自动抓cookie+UA) / cx_set_cookies(agent自行交付)。
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import * as cx from "./client.mjs";
+import { loginStart, loginStatus, loginCancel } from "./login.mjs";
 
 const server = new McpServer(
-  { name: "cx-mcp", version: "0.2.0" },
+  { name: "cx-mcp", version: "0.3.0" },
   { instructions:
     "xxt 作业工具。典型流程: cx_list_courses 选课 → cx_list_homework 看作业 → " +
     "cx_get_homework 拿题目(cx_submit 所需的全部字段都会返回) → 由你(调用方AI)写答案 → " +
     "cx_submit_homework 提交。answer 值格式: 单选单个大写字母; 多选字母升序连写; " +
     "判断 Right/Wrong; 填空见 get 返回的说明; 简答/富文本=HTML。提交会用 pyFlag=3 真实交卷, " +
     "拿不准时先 dryRun:true 看将发送的请求体。" +
-    "登录契约: Cookie 的获取与续期由你(调用方 agent)自行解决——任何业务工具在未登录时都会返回 " +
-    "{error:'NOT_LOGGED_IN'} 及所需 Cookie 的具体要求；拿到后用 cx_set_cookies 交付, " +
-    "再用 cx_check_login 确认。工具本身不做任何登录动作。" },
+    "登录: 未登录时业务工具返回 {error:'NOT_LOGGED_IN',...}。恢复方式二选一: " +
+    "① cx_login_start 启动本机浏览器登录(无账密则用户在窗口里扫码/登录), cx_login_status 轮询, " +
+    "成功后 cookie+UA 自动保存; ② 你自行获取 Cookie 后 cx_set_cookies 交付(建议带 userAgent)。" },
 );
+
+server.registerTool("cx_login_start", {
+  title: "浏览器登录",
+  description: "拉起本机 Chrome/Edge 打开登录页完成登录。username/password 可选(给了会自动填; 验证码/滑块由用户在弹出的窗口里手动处理); 都不给则窗口等用户扫码或手动登录。成功后自动抓取全部 cookie(含 HttpOnly)和该浏览器的 UA 存盘。本调用立即返回, 用 cx_login_status 轮询结果。",
+  inputSchema: {
+    username: z.string().optional().describe("登录账号(手机号/学号)"),
+    password: z.string().optional().describe("登录密码"),
+    headless: z.boolean().default(false).describe("无头模式(有验证码/扫码时不建议)"),
+  },
+}, async (a) => text(await loginStart(a)));
+
+server.registerTool("cx_login_status", {
+  title: "登录进度",
+  description: "查询浏览器登录流程状态: idle/running/success/failed/timeout/cancelled。running 时提示用户到弹出的浏览器窗口完成验证码或扫码。",
+  inputSchema: {},
+}, async () => text(loginStatus()));
+
+server.registerTool("cx_login_cancel", {
+  title: "取消登录",
+  description: "关闭登录浏览器并取消进行中的登录流程。",
+  inputSchema: {},
+}, async () => text(await loginCancel()));
 
 server.registerTool("cx_set_cookies", {
   title: "设置登录 Cookie",
-  description: "交付登录态。cookie 为浏览器请求头里的整段 Cookie 字符串(需含 UID/_uid/vc3/uf/_d; vc3 是 HttpOnly, 只能从请求头或能读 HttpOnly 的自动化 cookie API 获取)。保存到 cookies.json 并当场验证有效性。",
-  inputSchema: { cookie: z.string().min(20).describe("整段 Cookie 请求头字符串") },
-}, async ({ cookie }) => {
-  const r = await cx.setCookies(cookie);
+  description: "交付登录态(备选路径, 推荐用 cx_login_start)。cookie 为浏览器请求头里的整段 Cookie 字符串(需含 UID/_uid/vc3/uf/_d; vc3 是 HttpOnly, 只能从请求头或能读 HttpOnly 的自动化 cookie API 获取)。userAgent 强烈建议同时提供(Cookie 来源浏览器的 UA), 客户端会用它发请求保持指纹一致。保存后当场验证有效性。",
+  inputSchema: {
+    cookie: z.string().min(20).describe("整段 Cookie 请求头字符串"),
+    userAgent: z.string().optional().describe("该 Cookie 来源浏览器的 User-Agent"),
+  },
+}, async ({ cookie, userAgent }) => {
+  const r = await cx.setCookies(cookie, userAgent);
   const chk = await cx.checkLogin();
   return text({ ...r, verified: chk.loggedIn, check: chk });
 });
